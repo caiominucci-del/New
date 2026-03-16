@@ -1,0 +1,44 @@
+# ── Segredos (NUNCA commitar) ──────────────────────────────
+.env
+.streamlit/secrets.toml
+
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Ambientes virtuais ──────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env.local
+
+# ── Distribuição / build ────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# ── IDEs ────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Jupyter ─────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Cache e logs ────────────────────────────────────────────
+.cache/
+*.log
+logs/
