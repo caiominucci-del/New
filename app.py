@@ -44,14 +44,39 @@ st.set_page_config(
 # SECRETS — .env local  ou  Streamlit Cloud secrets.toml
 # ─────────────────────────────────────────────────────────────────────────────
 def get_secret(key: str, default: str = "") -> str:
+    """
+    Lê segredos com prioridade: st.secrets > os.environ > default.
+    Tenta múltiplos formatos de chave (maiúscula e minúscula).
+    """
+    # 1. Streamlit Cloud secrets
     try:
-        return st.secrets.get(key, os.getenv(key, default))
+        val = st.secrets.get(key, None)
+        if val:
+            return str(val).strip()
+        # Tenta variação em minúsculas
+        val = st.secrets.get(key.lower(), None)
+        if val:
+            return str(val).strip()
     except Exception:
-        return os.getenv(key, default)
+        pass
+    # 2. Variável de ambiente (.env local)
+    val = os.getenv(key, "") or os.getenv(key.lower(), "")
+    return str(val).strip() if val else default
 
 
-GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
-SERPAPI_KEY    = get_secret("SERPAPI_KEY")
+def get_gemini_key() -> str:
+    """Sempre lê a chave Gemini na hora — nunca usa valor em cache de módulo."""
+    return get_secret("GEMINI_API_KEY")
+
+
+def get_serpapi_key() -> str:
+    """Sempre lê a chave SerpAPI na hora — nunca usa valor em cache de módulo."""
+    return get_secret("SERPAPI_KEY")
+
+
+# Leitura inicial (usada em funções cacheadas que precisam do valor no momento do cache)
+GEMINI_API_KEY = get_gemini_key()
+SERPAPI_KEY    = get_serpapi_key()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -292,7 +317,8 @@ def buscar_interesse_tempo(keyword: str, janela: str = "today 3-m") -> dict:
     Retorna {"df": DataFrame, "pico": int, "is_real": bool}
     Fallback: curva estimada (marcada no UI como 🟡).
     """
-    if SERPAPI_KEY:
+    _serp_key = get_serpapi_key()
+    if _serp_key:
         try:
             params = {
                 "engine":      "google_trends",
@@ -301,7 +327,7 @@ def buscar_interesse_tempo(keyword: str, janela: str = "today 3-m") -> dict:
                 "date":        _JANELA_TO_SERP.get(janela, "today 3-m"),
                 "geo":         "BR",
                 "hl":          "pt",
-                "api_key":     SERPAPI_KEY,
+                "api_key":     _serp_key,
             }
             resp = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
             resp.raise_for_status()
@@ -353,7 +379,8 @@ def buscar_queries_relacionadas(keyword: str) -> dict:
     Requer SERPAPI_KEY — sem ela, retorna vazio (nunca dados falsos).
     Retorna {"data": DataFrame, "is_real": bool, "tipo": str}
     """
-    if SERPAPI_KEY:
+    _serp_key = get_serpapi_key()
+    if _serp_key:
         try:
             params = {
                 "engine":    "google_trends",
@@ -362,7 +389,7 @@ def buscar_queries_relacionadas(keyword: str) -> dict:
                 "date":      "now 7-d",
                 "geo":       "BR",
                 "hl":        "pt",
-                "api_key":   SERPAPI_KEY,
+                "api_key":   _serp_key,
             }
             resp = requests.get("https://serpapi.com/search.json", params=params, timeout=15)
             resp.raise_for_status()
@@ -439,15 +466,17 @@ def buscar_videos_canal(canal_nome: str, canal_query: str, yt_id: Optional[str],
 @st.cache_data(ttl=7200, show_spinner=False)
 def gerar_angulo_gemini(tema: str, categoria: str, keywords: list, descricao: str) -> dict:
     """
-    Ângulo editorial via Gemini 1.5 Flash (tier gratuito — Google AI Studio).
-    IMPORTANTE: só cacheia respostas bem-sucedidas.
-    Falhas levantam exceção → st.cache_data não armazena → próxima chamada tenta de novo.
+    Ângulo editorial via Gemini 1.5 Flash.
+    Lê a chave dinamicamente — funciona mesmo quando st.secrets
+    não estava disponível no carregamento inicial do módulo.
+    Lança exceção em falha para que o cache NÃO armazene fallbacks.
     """
-    if not GEMINI_API_KEY:
-        raise RuntimeError("GEMINI_API_KEY não configurada")
+    api_key = get_gemini_key()   # leitura dinâmica, não o valor de módulo
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY não encontrada em secrets nem em .env")
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+        f"gemini-1.5-flash-latest:generateContent?key={api_key}"
     )
     prompt = (
         "Você é estrategista de conteúdo do Brasil Paralelo — "
@@ -456,7 +485,7 @@ def gerar_angulo_gemini(tema: str, categoria: str, keywords: list, descricao: st
         f"TEMA: {tema} | CATEGORIA: {categoria}\n"
         f"KEYWORDS EM ALTA: {', '.join(keywords[:4])}\n"
         f"CONTEXTO: {descricao}\n\n"
-        "Responda APENAS com JSON válido (sem markdown, sem texto extra, sem comentários):\n"
+        "Responda APENAS com JSON válido (sem markdown, sem texto extra):\n"
         '{\n'
         '  "angulo": "Como o Brasil Paralelo deve abordar — 2 frases, tom do canal",\n'
         '  "titulo": "Título YouTube — direto, sem clickbait barato, máx 70 chars",\n'
@@ -480,7 +509,7 @@ def gerar_angulo_gemini(tema: str, categoria: str, keywords: list, descricao: st
     result = json.loads(text)
     for field in ["angulo", "titulo", "gancho", "urgencia", "formatos", "por_que_agora"]:
         if field not in result:
-            raise ValueError(f"Campo ausente na resposta: {field}")
+            raise ValueError(f"Campo ausente: {field}")
     return result
 
 
@@ -688,6 +717,36 @@ hr{{border:none!important;border-top:1px solid var(--border)!important;margin:20
 .sub-label{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);margin:14px 0 7px}}
 .sb-section{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--text-dim);margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border)}}
 </style>
+<script>
+// Nuclear sidebar fix — runs on every DOM mutation to permanently
+// hide any button that could collapse the sidebar, regardless of
+// which Streamlit version or which aria-label/data-testid it uses.
+(function() {{
+  function killCollapseButtons() {{
+    // All known selectors across Streamlit versions
+    var selectors = [
+      '[data-testid="stSidebarCollapseButton"]',
+      '[data-testid="collapsedControl"]',
+      '[data-testid="stSidebarCollapsedControl"]',
+      'button[aria-label="Close sidebar"]',
+      'button[aria-label="Open sidebar"]',
+      'button[aria-label="Collapse sidebar"]',
+      'button[aria-label="Expand sidebar"]',
+      'section[data-testid="stSidebar"] button[kind="header"]',
+      'section[data-testid="stSidebar"] > div > button',
+    ];
+    selectors.forEach(function(sel) {{
+      document.querySelectorAll(sel).forEach(function(el) {{
+        el.style.cssText = 'display:none!important;visibility:hidden!important;pointer-events:none!important;width:0!important;height:0!important;overflow:hidden!important;';
+      }});
+    }});
+  }}
+  // Run immediately and on every DOM change
+  killCollapseButtons();
+  var obs = new MutationObserver(killCollapseButtons);
+  obs.observe(document.documentElement, {{ childList: true, subtree: true }});
+}})();
+</script>
 """
     st.markdown(css, unsafe_allow_html=True)
 
@@ -768,9 +827,9 @@ with st.sidebar:
     show_int = st.checkbox("Canais internacionais", value=True)
 
     st.markdown('<div class="sb-section">IA Editorial</div>', unsafe_allow_html=True)
-    if GEMINI_API_KEY:
-        # Mostra os primeiros 8 chars da chave para confirmar que foi lida
-        key_preview = GEMINI_API_KEY[:8] + "..." if len(GEMINI_API_KEY) > 8 else GEMINI_API_KEY
+    _gk = get_gemini_key()
+    if _gk:
+        key_preview = _gk[:8] + "..." if len(_gk) > 8 else _gk
         st.markdown(
             f'<span style="font-family:DM Mono,monospace;font-size:9px;color:#059669;'
             f'background:rgba(5,150,105,0.08);border:1px solid rgba(5,150,105,0.3);'
@@ -778,14 +837,17 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
         st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
-        if st.button("↺ Regenerar ângulos", use_container_width=True, help="Limpa o cache e reprocessa com Gemini"):
+        if st.button("↺ Regenerar ângulos", use_container_width=True, help="Limpa cache e reprocessa"):
             gerar_angulo_gemini.clear()
             st.rerun()
     else:
-        st.caption("⚠ Configure GEMINI_API_KEY para ativar análise editorial.")
+        st.caption("⚠ GEMINI_API_KEY não encontrada.")
+        with st.expander("Como configurar", expanded=False):
+            st.markdown("""**Streamlit Cloud:** share.streamlit.io → app → ⋮ → Settings → Secrets\n\nCole:\n```\nGEMINI_API_KEY = \"AIza...\"\nSERPAPI_KEY = \"sua_chave\"\n```\nSalve — reinicia em ~30s""")
 
     st.markdown('<div class="sb-section">Google Trends</div>', unsafe_allow_html=True)
-    if SERPAPI_KEY:
+    _sk = get_serpapi_key()
+    if _sk:
         st.markdown(
             '<span style="font-family:DM Mono,monospace;font-size:9px;color:#059669;'
             'background:rgba(5,150,105,0.08);border:1px solid rgba(5,150,105,0.3);'
