@@ -36,7 +36,7 @@ st.set_page_config(
     page_title="Radar BP · Inteligência Editorial",
     page_icon="◎",
     layout="wide",
-    initial_sidebar_state="auto",
+    initial_sidebar_state="expanded",
 )
 
 
@@ -438,45 +438,56 @@ def buscar_videos_canal(canal_nome: str, canal_query: str, yt_id: Optional[str],
 
 @st.cache_data(ttl=7200, show_spinner=False)
 def gerar_angulo_gemini(tema: str, categoria: str, keywords: list, descricao: str) -> dict:
-    """Ângulo editorial via Gemini 1.5 Flash (tier gratuito — Google AI Studio)."""
+    """
+    Ângulo editorial via Gemini 1.5 Flash (tier gratuito — Google AI Studio).
+    IMPORTANTE: só cacheia respostas bem-sucedidas.
+    Falhas levantam exceção → st.cache_data não armazena → próxima chamada tenta de novo.
+    """
     if not GEMINI_API_KEY:
-        return _angulo_fallback(tema)
-    try:
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
-        )
-        prompt = (
-            "Você é estrategista de conteúdo do Brasil Paralelo — "
-            "canal conservador brasileiro com 6M+ inscritos, focado em história, política e soberania. "
-            "Seu tom é sério, profundo e patriótico.\n\n"
-            f"TEMA: {tema} | CATEGORIA: {categoria}\n"
-            f"KEYWORDS EM ALTA: {', '.join(keywords[:4])}\n"
-            f"CONTEXTO: {descricao}\n\n"
-            "Responda APENAS com JSON válido (sem markdown, sem texto extra, sem comentários):\n"
-            '{\n'
-            '  "angulo": "Como o Brasil Paralelo deve abordar — 2 frases, tom do canal",\n'
-            '  "titulo": "Título YouTube — direto, sem clickbait barato, máx 70 chars",\n'
-            '  "gancho": "Frase de abertura impactante, máximo 18 palavras",\n'
-            '  "urgencia": "alta",\n'
-            '  "formatos": ["Documentário"],\n'
-            '  "por_que_agora": "Motivo de urgência atual — 1 frase"\n'
-            "}"
-        )
-        payload = {
+        raise RuntimeError("GEMINI_API_KEY não configurada")
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
+    )
+    prompt = (
+        "Você é estrategista de conteúdo do Brasil Paralelo — "
+        "canal conservador brasileiro com 6M+ inscritos, focado em história, política e soberania. "
+        "Seu tom é sério, profundo e patriótico.\n\n"
+        f"TEMA: {tema} | CATEGORIA: {categoria}\n"
+        f"KEYWORDS EM ALTA: {', '.join(keywords[:4])}\n"
+        f"CONTEXTO: {descricao}\n\n"
+        "Responda APENAS com JSON válido (sem markdown, sem texto extra, sem comentários):\n"
+        '{\n'
+        '  "angulo": "Como o Brasil Paralelo deve abordar — 2 frases, tom do canal",\n'
+        '  "titulo": "Título YouTube — direto, sem clickbait barato, máx 70 chars",\n'
+        '  "gancho": "Frase de abertura impactante, máximo 18 palavras",\n'
+        '  "urgencia": "alta",\n'
+        '  "formatos": ["Documentário"],\n'
+        '  "por_que_agora": "Motivo de urgência atual — 1 frase"\n'
+        "}"
+    )
+    resp = requests.post(
+        url,
+        json={
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.65, "maxOutputTokens": 600},
-        }
-        resp = requests.post(url, json=payload, timeout=15)
-        resp.raise_for_status()
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-        text = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
-        result = json.loads(text)
-        # Garante que os campos obrigatórios existem
-        for field in ["angulo","titulo","gancho","urgencia","formatos","por_que_agora"]:
-            if field not in result:
-                return _angulo_fallback(tema)
-        return result
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    text   = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    text   = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
+    result = json.loads(text)
+    for field in ["angulo", "titulo", "gancho", "urgencia", "formatos", "por_que_agora"]:
+        if field not in result:
+            raise ValueError(f"Campo ausente na resposta: {field}")
+    return result
+
+
+def _chamar_gemini_com_fallback(tema: str, categoria: str, keywords: list, descricao: str) -> dict:
+    """Wrapper que captura exceções e retorna fallback — NUNCA propaga erros para a UI."""
+    try:
+        return gerar_angulo_gemini(tema, categoria, keywords, descricao)
     except Exception:
         return _angulo_fallback(tema)
 
@@ -497,23 +508,23 @@ def _angulo_fallback(tema: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 LIGHT_VARS = """
-  --bg:          #f0f4f8; --bg2:         #e4eaf2;
-  --surface:     #ffffff; --surface2:    #f8fafc;
+  --bg:          #f8fafc; --bg2:         #f1f5f9;
+  --surface:     #ffffff;
   --border:      #e2e8f0; --border2:     #cbd5e1;
-  --primary:     #2563eb; --primary-dim: #1d4ed8;
-  --primary-bg:  rgba(37,99,235,0.07);
-  --gold:        #d97706; --gold-bg:     rgba(217,119,6,0.08);
-  --red:         #dc2626; --red-bg:      rgba(220,38,38,0.07);
-  --green:       #059669; --green-bg:    rgba(5,150,105,0.08);
-  --text:        #0f172a; --text-dim:    #94a3b8; --text-mid:    #64748b;
-  --shadow:      0 1px 3px rgba(15,23,42,0.07),0 1px 2px rgba(15,23,42,0.05);
-  --shadow-md:   0 4px 8px rgba(15,23,42,0.09),0 2px 4px rgba(15,23,42,0.05);
-  --tag-bg:      #f1f5f9;
+  --primary:     #1d4ed8; --primary-dim: #1e40af;
+  --primary-bg:  rgba(29,78,216,0.06);
+  --gold:        #92400e; --gold-bg:     rgba(146,64,14,0.07);
+  --red:         #991b1b; --red-bg:      rgba(153,27,27,0.07);
+  --green:       #065f46; --green-bg:    rgba(6,95,70,0.07);
+  --text:        #0f172a; --text-dim:    #94a3b8; --text-mid:    #475569;
+  --shadow:      0 1px 3px rgba(15,23,42,0.08),0 1px 2px rgba(15,23,42,0.04);
+  --shadow-md:   0 4px 8px rgba(15,23,42,0.10),0 2px 4px rgba(15,23,42,0.05);
+  --tag-bg:      #f1f5f9; --tag-text:    #475569;
 """
 
 DARK_VARS = """
   --bg:          #09090f; --bg2:         #0d0e18;
-  --surface:     #10111c; --surface2:    #14162a;
+  --surface:     #10111c;
   --border:      #1c1f35; --border2:     #252840;
   --primary:     #3b82f6; --primary-dim: #2563eb;
   --primary-bg:  rgba(59,130,246,0.10);
@@ -523,325 +534,159 @@ DARK_VARS = """
   --text:        #e2e8f0; --text-dim:    #475569; --text-mid:    #94a3b8;
   --shadow:      0 1px 3px rgba(0,0,0,0.5);
   --shadow-md:   0 4px 8px rgba(0,0,0,0.45);
-  --tag-bg:      #1c1f35;
+  --tag-bg:      #1c1f35; --tag-text:    #94a3b8;
 """
 
 
 def inject_css(dark: bool):
+    if dark:
+        badge_css = """
+.seo-blast{color:#fca5a5!important;border-color:#7f1d1d!important;background:rgba(239,68,68,0.15)!important}
+.seo-high{color:#fcd34d!important;border-color:#78350f!important;background:rgba(245,158,11,0.15)!important}
+.seo-top{color:#93c5fd!important;border-color:#1e3a8a!important;background:rgba(59,130,246,0.15)!important}"""
+    else:
+        badge_css = """
+.seo-blast{color:#991b1b!important;border-color:#fca5a5!important;background:#fef2f2!important}
+.seo-high{color:#92400e!important;border-color:#fcd34d!important;background:#fffbeb!important}
+.seo-top{color:#1e40af!important;border-color:#93c5fd!important;background:#eff6ff!important}"""
+
     css = f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=DM+Mono:ital,wght@0,400;0,500&family=DM+Sans:wght@300;400;500;600&display=swap');
 
 :root {{ {DARK_VARS if dark else LIGHT_VARS} }}
-*, *::before, *::after {{ box-sizing: border-box; }}
+*,*::before,*::after{{box-sizing:border-box}}
 
-html, body,
-[data-testid="stAppViewContainer"],
-[data-testid="stAppViewBlockContainer"],
-.main .block-container,
-section.main > div {{
-    background: var(--bg) !important;
-    color: var(--text) !important;
-}}
-[data-testid="stSidebar"] {{
-    background: var(--surface) !important;
-    border-right: 1px solid var(--border) !important;
-}}
-[data-testid="stSidebar"] * {{
-    font-family: 'DM Sans', system-ui, sans-serif !important;
-    color: var(--text) !important;
-}}
-#MainMenu, footer, header,
-[data-testid="stDecoration"],
-[data-testid="stToolbar"] {{ display: none !important; }}
+html,body,[data-testid="stAppViewContainer"],[data-testid="stAppViewBlockContainer"],.main .block-container,section.main>div{{background:var(--bg)!important;color:var(--text)!important}}
 
-/* Garantir que o botão de recolher/expandir a sidebar NUNCA suma */
+[data-testid="stSidebar"]{{background:var(--surface)!important;border-right:1px solid var(--border)!important;min-width:260px!important}}
+[data-testid="stSidebar"] *{{font-family:'DM Sans',system-ui,sans-serif!important;color:var(--text)!important}}
+
+/* Hide ALL sidebar collapse/expand controls */
+[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebar"] button[kind="header"],
 [data-testid="collapsedControl"],
 [data-testid="stSidebarCollapsedControl"],
 button[aria-label="Close sidebar"],
-button[aria-label="Open sidebar"] {{
-    display: flex !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    pointer-events: auto !important;
-}}
+button[aria-label="Open sidebar"],
+button[aria-label="Collapse sidebar"],
+button[aria-label="Expand sidebar"]{{display:none!important;visibility:hidden!important;pointer-events:none!important;width:0!important;height:0!important;overflow:hidden!important}}
 
-[data-testid="stTabs"] [role="tablist"] {{
-    background: var(--surface) !important;
-    border-bottom: 1px solid var(--border) !important;
-    padding: 0 4px !important; gap: 0 !important;
-}}
-[data-testid="stTabs"] [role="tab"] {{
-    font-family: 'DM Mono', monospace !important;
-    font-size: 10px !important; letter-spacing: 0.14em !important;
-    text-transform: uppercase !important; color: var(--text-mid) !important;
-    padding: 13px 20px !important; border: none !important;
-    border-bottom: 2px solid transparent !important;
-    margin-bottom: -1px !important; border-radius: 0 !important;
-    background: transparent !important; transition: all 0.18s !important;
-    font-weight: 500 !important;
-}}
-[data-testid="stTabs"] [role="tab"]:hover {{ color: var(--text) !important; }}
-[data-testid="stTabs"] [role="tab"][aria-selected="true"] {{
-    color: var(--primary) !important;
-    border-bottom: 2px solid var(--primary) !important;
-    background: var(--primary-bg) !important;
-}}
-[data-testid="stTabs"] [role="tabpanel"] {{ padding-top: 20px !important; }}
+#MainMenu,footer,header,[data-testid="stDecoration"],[data-testid="stToolbar"],[data-testid="stStatusWidget"]{{display:none!important}}
 
-[data-testid="stMetric"] {{
-    background: var(--surface) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 10px !important; padding: 16px 18px !important;
-    box-shadow: var(--shadow) !important;
-}}
-[data-testid="stMetricLabel"] > div {{
-    font-family: 'DM Mono', monospace !important; font-size: 10px !important;
-    letter-spacing: 0.1em !important; text-transform: uppercase !important;
-    color: var(--text-dim) !important;
-}}
-[data-testid="stMetricValue"] {{
-    font-family: 'Sora', system-ui !important; color: var(--primary) !important;
-    font-size: 26px !important; font-weight: 700 !important;
-}}
+[data-testid="stTabs"] [role="tablist"]{{background:var(--surface)!important;border-bottom:1px solid var(--border)!important;padding:0 4px!important;gap:0!important}}
+[data-testid="stTabs"] [role="tab"]{{font-family:'DM Mono',monospace!important;font-size:10px!important;letter-spacing:.14em!important;text-transform:uppercase!important;color:var(--text-mid)!important;padding:13px 20px!important;border:none!important;border-bottom:2px solid transparent!important;margin-bottom:-1px!important;border-radius:0!important;background:transparent!important;transition:all .18s!important;font-weight:500!important}}
+[data-testid="stTabs"] [role="tab"]:hover{{color:var(--text)!important}}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"]{{color:var(--primary)!important;border-bottom:2px solid var(--primary)!important;background:var(--primary-bg)!important}}
+[data-testid="stTabs"] [role="tabpanel"]{{padding-top:20px!important}}
 
-[data-testid="stButton"] > button {{
-    font-family: 'DM Sans', system-ui !important; font-size: 13px !important;
-    font-weight: 500 !important; background: var(--surface) !important;
-    border: 1px solid var(--border2) !important; color: var(--text-mid) !important;
-    border-radius: 7px !important; transition: all 0.15s !important; padding: 8px 18px !important;
-}}
-[data-testid="stButton"] > button:hover {{
-    border-color: var(--primary) !important; color: var(--primary) !important;
-    background: var(--primary-bg) !important; box-shadow: var(--shadow) !important;
-}}
-[data-testid="stFormSubmitButton"] > button {{
-    font-family: 'DM Sans', system-ui !important; font-size: 13px !important;
-    font-weight: 600 !important; background: var(--primary) !important;
-    border: 1px solid var(--primary) !important; color: white !important;
-    border-radius: 7px !important; padding: 8px 18px !important;
-    transition: background 0.15s !important; width: 100% !important;
-}}
-[data-testid="stFormSubmitButton"] > button:hover {{
-    background: var(--primary-dim) !important;
-}}
+[data-testid="stMetric"]{{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:10px!important;padding:16px 18px!important;box-shadow:var(--shadow)!important}}
+[data-testid="stMetricLabel"]>div{{font-family:'DM Mono',monospace!important;font-size:10px!important;letter-spacing:.1em!important;text-transform:uppercase!important;color:var(--text-dim)!important}}
+[data-testid="stMetricValue"]{{font-family:'Sora',system-ui!important;color:var(--primary)!important;font-size:26px!important;font-weight:700!important}}
 
-[data-testid="stTextInput"] input,
-[data-testid="stTextArea"] textarea {{
-    background: var(--surface) !important; border: 1px solid var(--border2) !important;
-    border-radius: 7px !important; color: var(--text) !important;
-    font-family: 'DM Sans', system-ui !important; font-size: 14px !important;
-    transition: border-color 0.15s, box-shadow 0.15s !important;
-}}
-[data-testid="stTextInput"] input:focus,
-[data-testid="stTextArea"] textarea:focus {{
-    border-color: var(--primary) !important;
-    box-shadow: 0 0 0 3px rgba(37,99,235,0.12) !important; outline: none !important;
-}}
-[data-testid="stTextInput"] input::placeholder {{
-    color: var(--text-dim) !important;
-}}
+[data-testid="stButton"]>button{{font-family:'DM Sans',system-ui!important;font-size:13px!important;font-weight:500!important;background:var(--surface)!important;border:1px solid var(--border2)!important;color:var(--text-mid)!important;border-radius:7px!important;transition:all .15s!important;padding:8px 18px!important}}
+[data-testid="stButton"]>button:hover{{border-color:var(--primary)!important;color:var(--primary)!important;background:var(--primary-bg)!important;box-shadow:var(--shadow)!important}}
+[data-testid="stFormSubmitButton"]>button{{font-family:'DM Sans',system-ui!important;font-size:13px!important;font-weight:600!important;background:var(--primary)!important;border:1px solid var(--primary)!important;color:#ffffff!important;border-radius:7px!important;padding:8px 18px!important;transition:background .15s!important;width:100%!important}}
+[data-testid="stFormSubmitButton"]>button:hover{{background:var(--primary-dim)!important;color:#ffffff!important}}
 
-[data-testid="stSelectbox"] > div > div,
-[data-testid="stMultiSelect"] > div > div {{
-    background: var(--surface) !important;
-    border: 1px solid var(--border2) !important; border-radius: 7px !important;
-}}
-[data-testid="stSelectbox"] span,
-[data-testid="stMultiSelect"] span {{ color: var(--text) !important; }}
+[data-testid="stTextInput"] input,[data-testid="stTextArea"] textarea{{background:var(--surface)!important;border:1px solid var(--border2)!important;border-radius:7px!important;color:var(--text)!important;font-family:'DM Sans',system-ui!important;font-size:14px!important;transition:border-color .15s,box-shadow .15s!important}}
+[data-testid="stTextInput"] input:focus,[data-testid="stTextArea"] textarea:focus{{border-color:var(--primary)!important;box-shadow:0 0 0 3px rgba(29,78,216,.12)!important;outline:none!important}}
+[data-testid="stTextInput"] input::placeholder{{color:var(--text-dim)!important}}
 
-[data-testid="stExpander"] {{
-    background: var(--surface) !important; border: 1px solid var(--border) !important;
-    border-radius: 10px !important; box-shadow: var(--shadow) !important;
-    overflow: hidden !important; margin-bottom: 10px !important;
-    transition: box-shadow 0.2s, border-color 0.2s !important;
-}}
-[data-testid="stExpander"]:hover {{
-    border-color: var(--border2) !important; box-shadow: var(--shadow-md) !important;
-}}
-[data-testid="stExpander"] summary {{
-    font-family: 'DM Sans', system-ui !important; font-weight: 500 !important;
-    font-size: 14px !important; color: var(--text) !important;
-    padding: 14px 16px !important;
-}}
-[data-testid="stExpander"] summary:hover {{ background: var(--primary-bg) !important; }}
+[data-testid="stSelectbox"]>div>div,[data-testid="stMultiSelect"]>div>div{{background:var(--surface)!important;border:1px solid var(--border2)!important;border-radius:7px!important}}
+[data-testid="stSelectbox"] span,[data-testid="stMultiSelect"] span{{color:var(--text)!important}}
 
-[data-testid="stVerticalBlockBorderWrapper"] > div {{
-    background: var(--surface) !important; border: 1px solid var(--border) !important;
-    border-radius: 10px !important; padding: 0 !important;
-    box-shadow: var(--shadow) !important;
-    transition: box-shadow 0.2s, border-color 0.2s !important; overflow: hidden !important;
-}}
-[data-testid="stVerticalBlockBorderWrapper"] > div:hover {{
-    border-color: var(--border2) !important; box-shadow: var(--shadow-md) !important;
-}}
+[data-testid="stExpander"]{{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:10px!important;box-shadow:var(--shadow)!important;overflow:hidden!important;margin-bottom:10px!important;transition:box-shadow .2s,border-color .2s!important}}
+[data-testid="stExpander"]:hover{{border-color:var(--border2)!important;box-shadow:var(--shadow-md)!important}}
+[data-testid="stExpander"] summary{{font-family:'DM Sans',system-ui!important;font-weight:500!important;font-size:14px!important;color:var(--text)!important;padding:14px 16px!important}}
+[data-testid="stExpander"] summary:hover{{background:var(--primary-bg)!important}}
 
-[data-testid="stRadio"] label span {{
-    font-family: 'DM Sans', system-ui !important; font-size: 13px !important;
-    color: var(--text-mid) !important;
-}}
-[data-testid="stCheckbox"] label span {{
-    font-family: 'DM Sans', system-ui !important; font-size: 13px !important;
-    color: var(--text) !important;
-}}
+[data-testid="stVerticalBlockBorderWrapper"]>div{{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:10px!important;padding:0!important;box-shadow:var(--shadow)!important;transition:box-shadow .2s,border-color .2s!important;overflow:hidden!important}}
+[data-testid="stVerticalBlockBorderWrapper"]>div:hover{{border-color:var(--border2)!important;box-shadow:var(--shadow-md)!important}}
 
-hr {{ border: none !important; border-top: 1px solid var(--border) !important; margin: 20px 0 !important; }}
+[data-testid="stRadio"] label span{{font-family:'DM Sans',system-ui!important;font-size:13px!important;color:var(--text-mid)!important}}
+[data-testid="stCheckbox"] label span{{font-family:'DM Sans',system-ui!important;font-size:13px!important;color:var(--text)!important}}
 
-[data-testid="stAlert"] {{
-    background: var(--surface) !important; border: 1px solid var(--border2) !important;
-    border-radius: 8px !important; font-family: 'DM Sans', system-ui !important;
-    font-size: 13px !important;
-}}
-[data-testid="stCaptionContainer"] p {{
-    font-family: 'DM Mono', monospace !important; font-size: 10px !important;
-    color: var(--text-dim) !important; letter-spacing: 0.04em !important;
-}}
-[data-testid="stMarkdownContainer"] p {{
-    font-family: 'DM Sans', system-ui !important;
-    color: var(--text) !important; line-height: 1.6 !important; font-size: 13px !important;
-}}
+hr{{border:none!important;border-top:1px solid var(--border)!important;margin:20px 0!important}}
+[data-testid="stAlert"]{{background:var(--surface)!important;border:1px solid var(--border2)!important;border-radius:8px!important;font-family:'DM Sans',system-ui!important;font-size:13px!important}}
+[data-testid="stCaptionContainer"] p{{font-family:'DM Mono',monospace!important;font-size:10px!important;color:var(--text-dim)!important;letter-spacing:.04em!important}}
+[data-testid="stMarkdownContainer"] p{{font-family:'DM Sans',system-ui!important;color:var(--text)!important;line-height:1.6!important;font-size:13px!important}}
 
-/* ══ CUSTOM COMPONENTS ══════════════════════════════════════════════════════ */
+.bp-header{{display:flex;align-items:flex-end;justify-content:space-between;padding:0 0 18px 0;margin-bottom:4px;border-bottom:1px solid var(--border)}}
+.bp-badge{{width:40px;height:40px;background:var(--primary);border-radius:10px;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:16px;color:#ffffff;font-weight:500;flex-shrink:0;box-shadow:0 2px 10px rgba(29,78,216,.25)}}
+.bp-title{{font-family:'Sora',system-ui;font-size:21px;font-weight:700;color:var(--text);letter-spacing:-.02em;line-height:1}}
+.bp-subtitle{{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-top:4px}}
+.bp-meta{{text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:var(--text-dim);letter-spacing:.06em;line-height:1.8}}
+.bp-meta strong{{color:var(--text-mid);font-weight:500}}
 
-.bp-header {{
-    display: flex; align-items: flex-end; justify-content: space-between;
-    padding: 0 0 18px 0; margin-bottom: 4px; border-bottom: 1px solid var(--border);
-}}
-.bp-badge {{
-    width: 40px; height: 40px; background: var(--primary);
-    border-radius: 10px; display: flex; align-items: center; justify-content: center;
-    font-family: 'DM Mono', monospace; font-size: 16px; color: #fff; font-weight: 500;
-    flex-shrink: 0; box-shadow: 0 2px 10px rgba(37,99,235,0.30);
-}}
-.bp-title {{
-    font-family: 'Sora', system-ui; font-size: 21px; font-weight: 700;
-    color: var(--text); letter-spacing: -0.02em; line-height: 1;
-}}
-.bp-subtitle {{
-    font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.12em;
-    text-transform: uppercase; color: var(--text-dim); margin-top: 4px;
-}}
-.bp-meta {{
-    text-align: right; font-family: 'DM Mono', monospace;
-    font-size: 10px; color: var(--text-dim); letter-spacing: 0.06em; line-height: 1.8;
-}}
-.bp-meta strong {{ color: var(--text-mid); font-weight: 500; }}
+.sec-label{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--text-dim);padding-bottom:10px;border-bottom:1px solid var(--border);margin-bottom:18px}}
 
-.sec-label {{
-    font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.2em;
-    text-transform: uppercase; color: var(--text-dim); padding-bottom: 10px;
-    border-bottom: 1px solid var(--border); margin-bottom: 18px;
-}}
+.stat-row{{display:flex;gap:12px;margin-bottom:22px}}
+.stat-box{{flex:1;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;box-shadow:var(--shadow);text-align:center}}
+.stat-val{{font-family:'Sora',system-ui;font-size:28px;font-weight:700;color:var(--primary);line-height:1}}
+.stat-lbl{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);margin-top:5px}}
 
-.stat-row {{ display: flex; gap: 12px; margin-bottom: 22px; }}
-.stat-box {{
-    flex: 1; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); text-align: center;
-}}
-.stat-val {{
-    font-family: 'Sora', system-ui; font-size: 28px; font-weight: 700;
-    color: var(--primary); line-height: 1;
-}}
-.stat-lbl {{
-    font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--text-dim); margin-top: 5px;
-}}
+.sc-top{{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}}
+.sc-tema{{font-family:'Sora',system-ui;font-size:20px;font-weight:600;color:var(--text);line-height:1.2}}
+.sc-cat{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);margin-top:4px}}
+.sc-score-val{{font-family:'Sora',system-ui;font-size:40px;font-weight:700;line-height:1;text-align:right}}
+.sc-score-lbl{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-dim);text-align:right}}
+.sc-desc{{font-family:'DM Sans',system-ui;font-size:13px;color:var(--text-mid);line-height:1.55;margin-bottom:14px}}
 
-.sc-top {{
-    display: flex; justify-content: space-between;
-    align-items: flex-start; margin-bottom: 12px;
-}}
-.sc-tema {{ font-family: 'Sora', system-ui; font-size: 20px; font-weight: 600; color: var(--text); line-height: 1.2; }}
-.sc-cat  {{ font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }}
-.sc-score-val {{ font-family: 'Sora', system-ui; font-size: 40px; font-weight: 700; line-height: 1; text-align: right; }}
-.sc-score-lbl {{ font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-dim); text-align: right; }}
-.sc-desc {{ font-family: 'DM Sans', system-ui; font-size: 13px; color: var(--text-mid); line-height: 1.55; margin-bottom: 14px; }}
+.bar-group{{margin:10px 0}}
+.bar-row-lbl{{display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.06em;color:var(--text-dim);margin-bottom:4px}}
+.bar-track{{height:4px;background:var(--bg2);border-radius:99px;overflow:hidden;margin-bottom:8px}}
+.bar-fill{{height:100%;border-radius:99px}}
 
-.bar-group {{ margin: 10px 0; }}
-.bar-row-lbl {{
-    display: flex; justify-content: space-between; font-family: 'DM Mono', monospace;
-    font-size: 9px; letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 4px;
-}}
-.bar-track {{ height: 4px; background: var(--bg2); border-radius: 99px; overflow: hidden; margin-bottom: 8px; }}
-.bar-fill {{ height: 100%; border-radius: 99px; }}
+.chan-pills{{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}}
+.chan-pill{{font-family:'DM Mono',monospace;font-size:10px;padding:2px 9px;background:var(--tag-bg);border:1px solid var(--border);border-radius:5px;color:var(--tag-text)}}
 
-.chan-pills {{ display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }}
-.chan-pill {{
-    font-family: 'DM Mono', monospace; font-size: 10px; padding: 2px 9px;
-    background: var(--tag-bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text-mid);
-}}
+.angulo-box{{background:var(--primary-bg);border:1px solid var(--primary);border-left:3px solid var(--primary);border-radius:8px;padding:16px 18px;margin-top:16px}}
+.angulo-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}}
+.angulo-label{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--primary);font-weight:500}}
+.angulo-urg{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;padding:2px 9px;border-radius:5px;border:1px solid}}
+.urg-alta{{color:var(--red);border-color:var(--red);background:var(--red-bg)}}
+.urg-media{{color:var(--gold);border-color:var(--gold);background:var(--gold-bg)}}
+.urg-baixa{{color:var(--text-dim);border-color:var(--border2)}}
+.angulo-text{{font-family:'DM Sans',system-ui;font-size:13px;color:var(--text);line-height:1.6;margin-bottom:10px}}
+.angulo-gancho{{font-family:'Sora',system-ui;font-style:italic;font-size:15px;font-weight:500;color:var(--primary);line-height:1.4;padding:10px 0 8px;border-top:1px solid var(--border);margin-top:8px}}
+.angulo-meta{{font-family:'DM Mono',monospace;font-size:10px;color:var(--text-mid);margin-top:8px;line-height:1.8}}
+.angulo-meta strong{{color:var(--text-mid);font-weight:500}}
+.fmt-pill{{display:inline-block;padding:2px 9px;background:var(--tag-bg);border:1px solid var(--border2);border-radius:20px;font-family:'DM Mono',monospace;font-size:10px;color:var(--tag-text);margin:2px 2px 0 0}}
 
-.angulo-box {{
-    background: var(--primary-bg); border: 1px solid var(--primary);
-    border-left: 3px solid var(--primary); border-radius: 8px; padding: 16px 18px; margin-top: 16px;
-}}
-.angulo-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }}
-.angulo-label {{ font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--primary); font-weight: 500; }}
-.angulo-urg {{ font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 9px; border-radius: 5px; border: 1px solid; }}
-.urg-alta  {{ color: var(--red);      border-color: var(--red);    background: var(--red-bg); }}
-.urg-media {{ color: var(--gold);     border-color: var(--gold);   background: var(--gold-bg); }}
-.urg-baixa {{ color: var(--text-dim); border-color: var(--border2); }}
-.angulo-text  {{ font-family: 'DM Sans', system-ui; font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 10px; }}
-.angulo-gancho {{ font-family: 'Sora', system-ui; font-style: italic; font-size: 15px; font-weight: 500; color: var(--primary); line-height: 1.4; padding: 10px 0 8px; border-top: 1px solid var(--border); margin-top: 8px; }}
-.angulo-meta {{ font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text-mid); margin-top: 8px; line-height: 1.8; }}
-.angulo-meta strong {{ color: var(--text-dim); }}
-.fmt-pill {{ display: inline-block; padding: 2px 9px; background: var(--tag-bg); border: 1px solid var(--border2); border-radius: 20px; font-family: 'DM Mono', monospace; font-size: 10px; color: var(--text-mid); margin: 2px 2px 0 0; }}
+.seo-row{{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;background:var(--surface);border:1px solid var(--border);border-radius:7px;margin-bottom:5px;transition:border-color .15s}}
+.seo-row:hover{{border-color:var(--border2)}}
+.seo-kw{{font-family:'DM Sans',system-ui;font-size:13px;color:var(--text)}}
+.seo-badge{{font-family:'DM Mono',monospace;font-size:10px;padding:2px 8px;border-radius:5px;border:1px solid;white-space:nowrap}}
+.seo-med{{color:var(--text-mid);border-color:var(--border);background:var(--tag-bg)}}
+{badge_css}
 
-.seo-row {{
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 9px 13px; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 7px; margin-bottom: 5px; transition: border-color 0.15s;
-}}
-.seo-row:hover {{ border-color: var(--border2); }}
-.seo-kw    {{ font-family: 'DM Sans', system-ui; font-size: 13px; color: var(--text); }}
-.seo-badge {{ font-family: 'DM Mono', monospace; font-size: 10px; padding: 2px 8px; border-radius: 5px; border: 1px solid; white-space: nowrap; }}
-.seo-blast {{ color: var(--red);      border-color: var(--red);    background: var(--red-bg); }}
-.seo-high  {{ color: var(--gold);     border-color: var(--gold);   background: var(--gold-bg); }}
-.seo-med   {{ color: var(--text-dim); border-color: var(--border); background: var(--tag-bg); }}
-.seo-top   {{ color: var(--primary);  border-color: var(--primary); background: var(--primary-bg); }}
+.no-data-box{{background:var(--tag-bg);border:1px dashed var(--border2);border-radius:8px;padding:16px 18px;margin:8px 0;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.08em;color:var(--text-dim);text-align:center;line-height:1.8}}
 
-/* Aviso de dados indisponíveis */
-.no-data-box {{
-    background: var(--tag-bg); border: 1px dashed var(--border2);
-    border-radius: 8px; padding: 16px 18px; margin: 8px 0;
-    font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.08em;
-    color: var(--text-dim); text-align: center; line-height: 1.8;
-}}
+.news-item{{display:flex;gap:14px;padding:11px 0;border-bottom:1px solid var(--border)}}
+.news-item:last-child{{border-bottom:none}}
+.news-num{{font-family:'DM Mono',monospace;font-size:12px;color:var(--border2);min-width:22px;padding-top:1px;font-weight:500}}
+.news-body{{flex:1;min-width:0}}
+.news-title{{font-family:'DM Sans',system-ui;font-size:13px;font-weight:500;color:var(--text);line-height:1.45;margin-bottom:3px}}
+.news-title a{{color:inherit;text-decoration:none}}
+.news-title a:hover{{color:var(--primary)}}
+.news-meta{{font-family:'DM Mono',monospace;font-size:9px;color:var(--text-dim);letter-spacing:.04em}}
 
-.news-item {{
-    display: flex; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border);
-}}
-.news-item:last-child {{ border-bottom: none; }}
-.news-num {{ font-family: 'DM Mono', monospace; font-size: 12px; color: var(--border2); min-width: 22px; padding-top: 1px; font-weight: 500; }}
-.news-body {{ flex: 1; min-width: 0; }}
-.news-title {{ font-family: 'DM Sans', system-ui; font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.45; margin-bottom: 3px; }}
-.news-title a {{ color: inherit; text-decoration: none; }}
-.news-title a:hover {{ color: var(--primary); }}
-.news-meta {{ font-family: 'DM Mono', monospace; font-size: 9px; color: var(--text-dim); letter-spacing: 0.04em; }}
+.macro-wrap{{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 18px}}
+.macro-pill{{background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:5px 13px;font-family:'DM Sans',system-ui;font-size:12px;font-weight:500;color:var(--text-mid);transition:all .15s;cursor:default;box-shadow:var(--shadow)}}
+.macro-pill:hover{{border-color:var(--primary);color:var(--primary)}}
 
-.macro-wrap {{ display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 0 18px; }}
-.macro-pill {{
-    background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
-    padding: 5px 13px; font-family: 'DM Sans', system-ui; font-size: 12px; font-weight: 500;
-    color: var(--text-mid); transition: all 0.15s; cursor: default; box-shadow: var(--shadow);
-}}
-.macro-pill:hover {{ border-color: var(--primary); color: var(--primary); }}
+.canal-header{{padding:14px 16px 6px;border-bottom:1px solid var(--border)}}
+.canal-name{{font-family:'Sora',system-ui;font-size:14px;font-weight:600;color:var(--text);margin-bottom:2px}}
+.canal-foco{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.08em;color:var(--text-dim);text-transform:uppercase}}
 
-.canal-header {{ padding: 14px 16px 6px; border-bottom: 1px solid var(--border); }}
-.canal-name {{ font-family: 'Sora', system-ui; font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 2px; }}
-.canal-foco {{ font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.08em; color: var(--text-dim); text-transform: uppercase; }}
+.gap-card{{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--green);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow);margin-bottom:10px}}
+.gap-title{{font-family:'Sora',system-ui;font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px}}
+.gap-desc{{font-family:'DM Sans',system-ui;font-size:12px;color:var(--text-mid);line-height:1.5;margin-bottom:10px}}
+.gap-lbl{{display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:9px;color:var(--text-dim);margin-bottom:4px}}
 
-.gap-card {{
-    background: var(--surface); border: 1px solid var(--border);
-    border-left: 3px solid var(--green); border-radius: 10px;
-    padding: 16px 18px; box-shadow: var(--shadow); margin-bottom: 10px;
-}}
-.gap-title {{ font-family: 'Sora', system-ui; font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px; }}
-.gap-desc  {{ font-family: 'DM Sans', system-ui; font-size: 12px; color: var(--text-mid); line-height: 1.5; margin-bottom: 10px; }}
-.gap-lbl   {{ display: flex; justify-content: space-between; font-family: 'DM Mono', monospace; font-size: 9px; color: var(--text-dim); margin-bottom: 4px; }}
-
-.sub-label {{ font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-dim); margin: 14px 0 7px; }}
-.sb-section {{ font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-dim); margin: 16px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }}
+.sub-label{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-dim);margin:14px 0 7px}}
+.sb-section{{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--text-dim);margin:16px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border)}}
 </style>
 """
     st.markdown(css, unsafe_allow_html=True)
@@ -923,9 +768,21 @@ with st.sidebar:
     show_int = st.checkbox("Canais internacionais", value=True)
 
     st.markdown('<div class="sb-section">IA Editorial</div>', unsafe_allow_html=True)
-    usar_ia = st.checkbox("Ângulo Gemini (gratuito)", value=bool(GEMINI_API_KEY), help="Requer GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        st.caption("⚠ Configure GEMINI_API_KEY para ativar.")
+    if GEMINI_API_KEY:
+        # Mostra os primeiros 8 chars da chave para confirmar que foi lida
+        key_preview = GEMINI_API_KEY[:8] + "..." if len(GEMINI_API_KEY) > 8 else GEMINI_API_KEY
+        st.markdown(
+            f'<span style="font-family:DM Mono,monospace;font-size:9px;color:#059669;'
+            f'background:rgba(5,150,105,0.08);border:1px solid rgba(5,150,105,0.3);'
+            f'padding:2px 8px;border-radius:4px;">🟢 Gemini ativo · {key_preview}</span>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
+        if st.button("↺ Regenerar ângulos", use_container_width=True, help="Limpa o cache e reprocessa com Gemini"):
+            gerar_angulo_gemini.clear()
+            st.rerun()
+    else:
+        st.caption("⚠ Configure GEMINI_API_KEY para ativar análise editorial.")
 
     st.markdown('<div class="sb-section">Google Trends</div>', unsafe_allow_html=True)
     if SERPAPI_KEY:
@@ -1015,11 +872,11 @@ with aba1:
 
         temas_enriquecidos.sort(key=lambda x: x["score"], reverse=True)
 
-        # ── IA angles ─────────────────────────────────────────────────────────
-        if usar_ia and GEMINI_API_KEY:
+        # ── IA angles — roda automaticamente quando GEMINI_API_KEY está presente ──
+        if GEMINI_API_KEY:
             with st.spinner("Gerando ângulos editoriais com Gemini..."):
                 for t in temas_enriquecidos:
-                    t["ia_data"] = gerar_angulo_gemini(
+                    t["ia_data"] = _chamar_gemini_com_fallback(
                         t["tema"], t["categoria"], t["keywords"], t["descricao"]
                     )
 
